@@ -46,7 +46,7 @@ MISSILE_NORMAL = 0
 MISSILE_POWERED = 1
 MISSILE_EXPLODE = 2
 
-STAGE_ENEMIES = 100
+STAGE_ENEMIES = [50,100,150,200]
 ENEMY_RADIUS = 5
 ENEMY_SPEED = 1
 ENEMY_NORMAL = 0
@@ -192,7 +192,7 @@ class Game_stage_class:
         # Draw new text
         display.set_pen(WHITE)
         # str, x, y, word-wrapp pixels, scale (, angle, spacing, fixed-space)
-        self.str_prev = "STAGE " + str(self.battle_ship.stage) + "  LEFT=" + str(self.battle_ship.ships) + "  SC=" + str(self.battle_ship.score)
+        self.str_prev = "STAGE " + (str(self.battle_ship.stage) if self.battle_ship.stage <= FINAL_STAGE else "CL") + "  LEFT=" + str(self.battle_ship.ships) + "  SC=" + str(self.battle_ship.score)
         display.text(self.str_prev, 0, 0, 240, 2)
 
 ########### END OF Game_stage_class ###########
@@ -259,10 +259,12 @@ class Object_class:
 # An enemy space ship control class
 '''
 class An_Enemy_ship_class(Object_class):
-    model_attr = [   # [color, speed_up, score]
-                    [RED   , 0,   1],    # ENEMY_NORMAL
-                    [GREEN , 1,  10],    # ENEMY_UPGRADE_MISSILE
-                    [YELLOW, 2, 100]     # ENEMY_ADD_SHIP
+    # Probabilities generating an enemy models, the probability values must be a prime number
+    model_probability = [{"upgMissile": 37, "addShip": 47}, {"upgMissile": 29, "addShip": 37}, {"upgMissile": 23, "addShip": 29}, {"upgMissile": 17, "addShip": 23}]
+    model_attr = [   # [color, speed_up, score, decrement score when miss this]
+                    [RED   , 0,   5,  3],    # ENEMY_NORMAL
+                    [GREEN , 1,  50, 25],    # ENEMY_UPGRADE_MISSILE
+                    [YELLOW, 2, 100, 50]     # ENEMY_ADD_SHIP
         ]
 
     def __init__(self):
@@ -270,6 +272,8 @@ class An_Enemy_ship_class(Object_class):
         self.warp_timer = random.randint(1, 10)
         self.model = ENEMY_NORMAL
         self.set_model()
+        self.move_dir_change = random.randint(1,20)
+        self.move_dir = (-random.randint(1, 3), random.randint(-2, 2))
 
     # Set disappear flag (erase this in next drawing turn)
     def set_disappear(self, flag = True):
@@ -278,11 +282,11 @@ class An_Enemy_ship_class(Object_class):
             self.warp_timer = random.randint(1, 10)
 
     # Decides a model of enemy
-    def set_model(self):
+    def set_model(self, md = 0):
         m = random.randint(0,99)
-        if m % 23 == 0:
+        if m % self.model_probability[md]["addShip"] == 0:
             self.model = ENEMY_ADD_SHIP
-        elif m % 17 == 0:
+        elif m % self.model_probability[md]["upgMissile"] == 0:
             self.model = ENEMY_UPGRADE_MISSILE
         else:
             self.model = ENEMY_NORMAL
@@ -293,20 +297,24 @@ class An_Enemy_ship_class(Object_class):
     def get_score(self):
         return An_Enemy_ship_class.model_attr[self.model][2]
 
+    # Get score
+    def get_dec_score(self):
+        return An_Enemy_ship_class.model_attr[self.model][3]
+
     # Let an enemy warp-out
-    def warp_out(self):
+    def warp_out(self, md):
         if self.display == False:
             self.set_disappear(False)
             self.warp_timer -= 1
             if self.warp_timer <= 0:
-                self.set_model()
+                self.set_model(md)
                 self.move_abs(WIDTH - self.r - random.randint(0, 30), random.randint(TITLE_HEIGHT + self.r, HEIGHT - self.r))
                 self.show()
                 self.warp_timer = random.randint(1, 10)
                 return True
         return False
 
-    # Draw the battle ship
+    # Draw an enemy object
     def draw(self):
         if self.display:
             # Move and redraw the enemy ship
@@ -319,10 +327,19 @@ class An_Enemy_ship_class(Object_class):
             # Erase
             if self.disappear:
                 self.show(False)
+                self.set_disappear(False)
                 return
             
-            # Move and redraw
-            self.move_rel(-random.randint(1, 3), random.randint(-2, 2))
+            # Move
+            self.move_dir_change -= 1
+            if self.move_dir_change == 0:
+                self.move_rel(self.move_dir[0], self.move_dir[1])
+                self.move_dir_change = random.randint(1,20)
+                self.move_dir = (self.move_dir[0], random.randint(-2, 2))
+            else:
+                self.move_rel(self.move_dir[0], self.move_dir[1])
+
+            # Redraw
             if self.x <= self.r:
                 self.set_disappear()
             else:
@@ -340,11 +357,18 @@ class An_Enemy_ship_class(Object_class):
 '''
 class Enemy_ships_class:
     def __init__(self):
+        self.model = 0
+        self.generated = 0
         self.generate()
         self.enemies = []
         for i in list(range(5)):
             enemy = An_Enemy_ship_class()
             self.enemies.append(enemy)
+
+    def set_model(self, md = None):
+        if not md is None:
+            self.model = md
+        return self.model
 
     def generate(self, dn = 0):
         if dn == 0:
@@ -355,8 +379,8 @@ class Enemy_ships_class:
 
     def draw(self):
         for enemy in self.enemies:
-            if self.generated <= STAGE_ENEMIES:
-                if enemy.warp_out():
+            if self.generated <= STAGE_ENEMIES[self.model]:
+                if enemy.warp_out(self.model):
                     self.generate(1)
             enemy.draw()
 
@@ -390,6 +414,7 @@ class Missile_class(Object_class):
             display.pixel_span(self.x, self.y, MISSILE_LENGTH)
             if self.disappear:
                 self.show(False)
+                self.set_disappear(False)
                 return
             
             self.move_rel(0 if self.missile_grade == MISSILE_EXPLODE else self.speed, 0)
@@ -421,12 +446,15 @@ class Battle_ship_class(Object_class):
 
         self.x = 10
         self.y = int(HEIGHT / 2)
-        self.colors = [(BLACK,BLACK,BLACK), (YELLOW,GREEN,RED), (BLUE,YELLOW,RED), (GREEN,YELLOW,RED)]
+        self.colors = [(BLACK,BLACK,BLACK,BLACK), (YELLOW,GREEN,RED,MAGENTA), (BLUE,YELLOW,RED,MAGENTA), (GREEN,YELLOW,RED,MAGENTA)]
 
+        # Data to erase previous ship image
         self.x_prev = -1
         self.y_prev = -1
         self.r_prev = 0
+        self.u_prev = 0
         
+        # Missiles
         self.missiles = []
         for i in list(range(3)):
             missile = Missile_class()
@@ -434,6 +462,9 @@ class Battle_ship_class(Object_class):
 
     # Restart the game
     def restart(self, new_stage = 1):
+        # Set the enemy model
+        self.enemies.set_model(int((new_stage - 1) / 3))
+
         if self.ships <= 0 or self.stage > FINAL_STAGE:
             # Update the max score
             if self.score > self.score_max:
@@ -466,8 +497,8 @@ class Battle_ship_class(Object_class):
             # Clear the screen
             display.set_pen(BLACK)
             display.clear()
-
             return True
+
         return False
 
     # Fire a missile
@@ -486,7 +517,15 @@ class Battle_ship_class(Object_class):
     def check_collisions(self):
         enemies_num = 0
         for enemy in self.enemies.enemies:
-            if enemy.display:
+            # Miss an enemy, decement the score
+            if enemy.disappear:
+                if enemy.x <= enemy.r:
+                    self.score -= enemy.get_dec_score()
+                    if self.score < 0:
+                        self.score = 0
+
+            # An enemy alive
+            elif enemy.display:
                 # Speed up
                 spd = enemy.set_speed(-1)
                 if self.stage > 1 and spd == ENEMY_SPEED:
@@ -496,9 +535,9 @@ class Battle_ship_class(Object_class):
                 enemies_num += 1
                 for missile in self.missiles:
                     if missile.display:
-                        # A missile collide with the battle ship
+                        # A missile collides with the battle ship
                         mx = missile.x + MISSILE_LENGTH
-                        rsqr = enemy.r * enemy.r
+                        rsqr = (enemy.r + missile.r) * (enemy.r + missile.r)
                         dsqr = (enemy.x - mx) * (enemy.x - mx) + (enemy.y - missile.y) * (enemy.x - missile.y)
                         if dsqr < rsqr:
                             self.score += enemy.get_score()
@@ -514,10 +553,13 @@ class Battle_ship_class(Object_class):
 
                             enemy.set_disappear()
                             
-                            # Powerd missile
+                            # Change to powerd missile
                             if missile.missile_grade == MISSILE_POWERED:
                                 missile.r = MISSILE_RADIUS_POWERED
                                 missile.missile_grade = MISSILE_EXPLODE
+                            # Exploded powered missole
+                            elif missile.missile_grade == MISSILE_EXPLODE:
+                                missile.missile_grade = MISSILE_NORMAL
                             # Normal missile
                             else:
                                 missile.set_disappear()
@@ -527,7 +569,7 @@ class Battle_ship_class(Object_class):
                 if enemy.disappear:
                     continue
 
-                # An enemy collide with the battle ship
+                # An enemy collides with the battle ship
                 rsqr = (enemy.r + self.r) * (enemy.r + self.r)
                 dsqr = (enemy.x - self.x) * (enemy.x - self.x) + (enemy.y - self.y) * (enemy.y - self.y)
                 if dsqr < rsqr:
@@ -549,14 +591,18 @@ class Battle_ship_class(Object_class):
                     return True
 
         # No enemy, stage clear
-        if self.enemies.generated >= STAGE_ENEMIES and enemies_num == 0 and not self.ship_destroyed:
+        if self.enemies.generated >= STAGE_ENEMIES[self.enemies.set_model()] and enemies_num == 0 and not self.ship_destroyed:
             self.go_to_next_stage = True
         
         return False
 
     # Draw the battle ship
     def draw(self):
-        def draw_ship(x, y, r, colors):
+        def draw_ship(x, y, r, u, colors):
+            if u > 0:
+                display.set_pen(colors[3])
+                display.circle(x, y, r)
+                display.circle(x, y, r-1)
             display.set_pen(colors[0])
             display.triangle(x+r, y, x-r+2, y-r, x-r+2, y+r)
             display.set_pen(colors[2])
@@ -567,23 +613,24 @@ class Battle_ship_class(Object_class):
 
         # Redraw the battle ship
         if self.display:
+            # Move and draw missiles
+            for missile in self.missiles:
+                missile.draw()
+
             # Erase the previous object
             if self.r_prev > 0:
-                draw_ship(self.x_prev, self.y_prev, self.r_prev, self.colors[0])
+                draw_ship(self.x_prev, self.y_prev, self.r_prev, self.u_prev, self.colors[0])
 
             if self.disappear:
                 self.show(False)
                 return
 
             # Draw new object and save to the variables for the previous data
-            draw_ship(self.x, self.y, self.r, self.colors[self.ships])
+            draw_ship(self.x, self.y, self.r, self.missile_upgrade, self.colors[self.ships])
             self.x_prev = self.x
             self.y_prev = self.y
             self.r_prev = self.r
-            
-            # Move and draw missiles
-            for missile in self.missiles:
-                missile.draw()
+            self.u_prev = self.missile_upgrade
 
 ########### END OF Multi_core_class ###########
 
@@ -613,7 +660,7 @@ def draw_display(core1, game_stage, battle_ship, enemy_ships):
                     display.text("HIGH-SC=" + str(battle_ship.score_max), 15, 73, 240, 3)
                 display.set_pen(GREEN)
                 display.text("X: REPLAY", 65, 111, 240, 3)
-            
+
             # Next stage
             else:
                 display.set_pen(YELLOW)
@@ -631,7 +678,7 @@ def draw_display(core1, game_stage, battle_ship, enemy_ships):
                 enemy_ships.generate()
                 battle_ship.restart(battle_ship.stage)
                 game_stage.clear()
-            
+
         # The battle ship has been destroyed, then clear this stage
         elif battle_ship.ship_destroyed:
             display.set_pen(YELLOW)
@@ -643,18 +690,18 @@ def draw_display(core1, game_stage, battle_ship, enemy_ships):
                 time.sleep(1)
                 display.set_pen(BLACK)
                 display.text(msg, 12, 50, 240, 4)
-                
+
             battle_ship.ship_destroyed = False
             game_stage.clear()
 
         # Check collisions of objects in the game screen
         battle_ship.check_collisions()
-        
+
         # Move objects and redraw the game screen
         game_stage.draw()
         enemy_ships.draw()
         battle_ship.draw()
-        
+
     # Game over
     elif battle_ship.ships == 0:
         game_stage.draw()
@@ -669,7 +716,7 @@ def draw_display(core1, game_stage, battle_ship, enemy_ships):
             display.text("HIGH-SC=" + str(battle_ship.score_max), 15, 73, 240, 3)
         display.set_pen(GREEN)
         display.text("X: REPLAY", 65, 111, 240, 3)
-        
+
     # Start up
     else:
         game_stage.draw()
