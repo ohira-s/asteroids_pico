@@ -1,6 +1,9 @@
 '''''''''
 # ASTEROIDS
 #   A game for Rapsberry Pi PICO/PICO W with Pico Display (PIMORONI)
+#     - Rapsberry Pi PICO or PICO W
+#     - Pico Display (PIMORONI)
+#     - micropython 1.20
 #   Copyright 2023, Shunsuke Ohira
 '''''''''
 
@@ -11,20 +14,22 @@ from picographics import PicoGraphics, DISPLAY_PICO_DISPLAY, PEN_P4
 import machine, _thread
 import random
 
-# We're only using a few colours so we can use a 4 bit/16 colour palette and save RAM!
+# We're only using a few colors so we can use a 4 bit/16 colour palette and save RAM!
 display = PicoGraphics(display=DISPLAY_PICO_DISPLAY, pen_type=PEN_P4, rotate=0)
 
-WIDTH, HEIGHT = display.get_bounds()
-TITLE_HEIGHT = 20
+WIDTH, HEIGHT = display.get_bounds()     # LCD size
+TITLE_HEIGHT = 20                        # STAGE, LEFT, SCORE dispay area
 
 display.set_backlight(0.5)
 display.set_font("bitmap8")
 
+# Button GPIO
 button_a = Button(12)
 button_b = Button(13)
 button_x = Button(14)
 button_y = Button(15)
 
+# Color definitions
 WHITE = display.create_pen(255, 255, 255)
 BLACK = display.create_pen(0, 0, 0)
 CYAN = display.create_pen(0, 255, 255)
@@ -35,23 +40,25 @@ RED = display.create_pen(255, 0, 0)
 GARNET = display.create_pen(255, 64, 64)
 BLUE = display.create_pen(80, 128, 255)
 
-FINAL_STAGE = 9
-SHIPS_INIT = 3
-MISSILE_RADIUS_NORMAL = 2
-MISSILE_RADIUS_POWERED = 15
-MISSILE_SPEED = 5
-MISSILE_LENGTH = 10
-MISSILE_UPGRADE_COUNT = 5
-MISSILE_NORMAL = 0
-MISSILE_POWERED = 1
-MISSILE_EXPLODE = 2
+FINAL_STAGE = 9                      # Final stage number (game clear)
+SHIPS_INIT = 3                       # Initial number of player's space crafts
+MISSILE_MAX = 3                      # Maximum number of missiles on screen
+MISSILE_RADIUS_NORMAL = 2            # Normal missile radius
+MISSILE_RADIUS_POWERED = 15          # Upgrade missile radius
+MISSILE_SPEED = 5                    # Missile speed
+MISSILE_LENGTH = 10                  # Missile length
+MISSILE_UPGRADE_COUNT = 5            # Number of upgrade missiles
+MISSILE_NORMAL = 0                   # Normal missile type
+MISSILE_POWERED = 1                  # Upgrade missile type
+MISSILE_EXPLODE = 2                  # Upgrade missile exploded
 
-STAGE_ENEMIES = [50,100,150,200]
-ENEMY_RADIUS = 5
-ENEMY_SPEED = 1
-ENEMY_NORMAL = 0
-ENEMY_UPGRADE_MISSILE = 1
-ENEMY_ADD_SHIP = 2
+EMEMIES_MAX = 5                      # Maximum enemies on screen
+STAGE_ENEMIES = [50,100,150,200]     # Number of asteroids for STAGE 0..2, 3..5, 6..8, 9
+ENEMY_RADIUS = 5                     # Asteroid radius
+ENEMY_SPEED = 1                      # Asteroid speed (default)
+ENEMY_NORMAL = 0                     # Asteroid (RED circle)
+ENEMY_UPGRADE_MISSILE = 1            # Enemy ship to upgrade player's missile (GREEN)
+ENEMY_ADD_SHIP = 2                   # Enemy ship to add a player's space craft (YELLOW)
 
 '''
 # Multi-core control class
@@ -85,7 +92,6 @@ class Multi_core_class:
                 res_thread = _thread.start_new_thread(self.multi_core_task_loop, ())
                 print("START MULTI-CORE.")
             except Exception as e:
-                Board_class.bg_wakeup = False
                 print("COULD NOT START MULTI-CORE:", e)
                 return False
         else:
@@ -96,7 +102,7 @@ class Multi_core_class:
 
     '''
     # Task loop for the multi-core.
-    # NEVER CALL THIS METHOD.  start_multi_core automatically call this method.
+    # NEVER CALL THIS METHOD.  start_multi_core() automatically calls this method.
     '''
     def multi_core_task_loop(self):
         while True:
@@ -117,6 +123,9 @@ class Multi_core_class:
 
     '''
     # Set worker function and its arguments as a tuple
+    #   name: Name of the worker to know the working worker
+    #   func: Function works for the worker
+    #   args: Arguments as a tuple for the func
     '''
     def worker_set(self, name, func, args):
         # Wait for current working function if it exists
@@ -173,7 +182,7 @@ class Game_stage_class:
         if with_update:
             display.update()
 
-    # Draw the game stage
+    # Draw the game stage (Background tiny stars, STAGE, LEFT and SCORE)
     def draw(self):
         # Erase the previous text
         if self.str_prev != "":
@@ -200,6 +209,7 @@ class Game_stage_class:
 
 '''
 # Object management class
+# This class will be inherited by moving object classes (An_Enemy_ship_class, Missile_class and Battle_ship_class)
 '''
 class Object_class:
     def __init__(self, speed = 1, radius = 10):
@@ -214,17 +224,18 @@ class Object_class:
     def show(self, flag = True):
         self.display = flag
 
-    # Set disappear flag (erase this in next drawing turn)
+    # Set disappear flag (erase this object in next drawing turn)
     def set_disappear(self, flag = True):
         self.disappear = flag
         
-    # Set battle ship speed
+    # Set the object speed
+    # You can also get current speed with sp = set_speed()
     def set_speed(self, spd = 0):
         if spd > 0:
             self.speed = spd
         return self.speed
 
-    # Move the ship relatively
+    # Move the object relatively
     def move_rel(self, dx, dy):
         dx *= self.speed
         dy *= self.speed
@@ -240,7 +251,7 @@ class Object_class:
         elif self.y > HEIGHT - self.r:
             self.y = HEIGHT - self.r
 
-    # Move the ship to absolute coordinates
+    # Move the object to absolute coordinates
     def move_abs(self, px, py):
         self.x = px
         self.y = py
@@ -256,10 +267,10 @@ class Object_class:
 
 
 '''
-# An enemy space ship control class
+# An enemy space ship control class (an asteroid, a missile upgrade ship and a ship to add player's space craft)
 '''
 class An_Enemy_ship_class(Object_class):
-    # Probabilities generating an enemy models, the probability values must be a prime number
+    # Probabilities generating an enemy models, the probability values should be a prime number and upgMissile x addShip >= 100
     model_probability = [{"upgMissile": 37, "addShip": 47}, {"upgMissile": 29, "addShip": 37}, {"upgMissile": 23, "addShip": 29}, {"upgMissile": 17, "addShip": 23}]
     model_attr = [   # [color, speed_up, score, decrement score when miss this]
                     [RED   , 0,   5,  3],    # ENEMY_NORMAL
@@ -278,6 +289,8 @@ class An_Enemy_ship_class(Object_class):
     # Set disappear flag (erase this in next drawing turn)
     def set_disappear(self, flag = True):
         super().set_disappear(flag)
+        
+        # Set a timer to re-generate (warp out) this object
         if flag:
             self.warp_timer = random.randint(1, 10)
 
@@ -293,11 +306,11 @@ class An_Enemy_ship_class(Object_class):
 
         self.set_speed(An_Enemy_ship_class.model_attr[self.model][1] + ENEMY_SPEED)
 
-    # Get score
+    # Get score to add
     def get_score(self):
         return An_Enemy_ship_class.model_attr[self.model][2]
 
-    # Get score
+    # Get score to subtract
     def get_dec_score(self):
         return An_Enemy_ship_class.model_attr[self.model][3]
 
@@ -353,32 +366,35 @@ class An_Enemy_ship_class(Object_class):
 
 
 '''
-# Enemy space ships control class
+# Enemy objects control class (asteroids, missile upgrade ships and ships to add player's space craft)
 '''
 class Enemy_ships_class:
     def __init__(self):
-        self.model = 0
-        self.generated = 0
-        self.generate()
+        self.model = 0                        # 0=STAGE 0..2, 1=STAGE3..5, 2=STAGE6..8, 3=STAGE9
+        self.generated = 0                    # Number of enemy object warped-out in a stage
         self.enemies = []
-        for i in list(range(5)):
+        for i in list(range(EMEMIES_MAX)):
             enemy = An_Enemy_ship_class()
             self.enemies.append(enemy)
 
+    # Set stage model
     def set_model(self, md = None):
         if not md is None:
             self.model = md
         return self.model
 
+    # Reset or increment the number of enemy objects in this stage
     def generate(self, dn = 0):
         if dn == 0:
             self.generated = 0
         else:
             self.generated += dn
         return self.generated
-
+    
+    # Let enemy objects wapr-out, and redraw all enemy objects on the screen
     def draw(self):
         for enemy in self.enemies:
+            # Number of enemy objects already warped-out is equal or smaller than the maximum number for this stage
             if self.generated <= STAGE_ENEMIES[self.model]:
                 if enemy.warp_out(self.model):
                     self.generate(1)
@@ -405,18 +421,21 @@ class Missile_class(Object_class):
             self.missile_grade = grade
             self.show()
 
-    # Draw the missile
+    # Draw a missile
     def draw(self):
         if self.display:
-            # Move and redraw the enemy ship
+            # Move and redraw a missile
             display.set_pen(BLACK)
             display.circle(self.x, self.y, self.r)
             display.pixel_span(self.x, self.y, MISSILE_LENGTH)
+            
+            # Should be erased
             if self.disappear:
                 self.show(False)
                 self.set_disappear(False)
                 return
             
+            # Move a missile
             self.move_rel(0 if self.missile_grade == MISSILE_EXPLODE else self.speed, 0)
             if self.x >= WIDTH - self.r:
                 self.set_disappear()
@@ -429,7 +448,7 @@ class Missile_class(Object_class):
 
 
 '''
-# Space battle ship control class
+# Player's space battle ship control class
 '''
 class Battle_ship_class(Object_class):
     def __init__(self, enemies):
@@ -440,15 +459,16 @@ class Battle_ship_class(Object_class):
         self.go_to_next_stage = False
         self.stage = 1
         self.score = 0
-        self.score_max = 0
+        self.score_max = 0                 # Record the high score
         self.ships = SHIPS_INIT
         self.missile_upgrade = 0
 
         self.x = 10
         self.y = int(HEIGHT / 2)
+        # Space craft colors definitions
         self.colors = [(BLACK,BLACK,BLACK,BLACK), (YELLOW,GREEN,RED,MAGENTA), (BLUE,YELLOW,RED,MAGENTA), (GREEN,YELLOW,RED,MAGENTA)]
 
-        # Data to erase previous ship image
+        # Data to erase the previous space craft image
         self.x_prev = -1
         self.y_prev = -1
         self.r_prev = 0
@@ -456,11 +476,11 @@ class Battle_ship_class(Object_class):
         
         # Missiles
         self.missiles = []
-        for i in list(range(3)):
+        for i in list(range(MISSILE_MAX)):
             missile = Missile_class()
             self.missiles.append(missile)
 
-    # Restart the game
+    # Restart the game for a stage
     def restart(self, new_stage = 1):
         # Set the enemy model
         self.enemies.set_model(int((new_stage - 1) / 3))
@@ -551,6 +571,7 @@ class Battle_ship_class(Object_class):
                             elif enemy.model == ENEMY_UPGRADE_MISSILE:
                                 self.missile_upgrade += MISSILE_UPGRADE_COUNT
 
+                            # This enemy object must be erased in next drawing turn
                             enemy.set_disappear()
                             
                             # Change to powerd missile
@@ -562,6 +583,7 @@ class Battle_ship_class(Object_class):
                                 missile.missile_grade = MISSILE_NORMAL
                             # Normal missile
                             else:
+                                # This missile must be erased in next drawing turn
                                 missile.set_disappear()
                                 
                             break
@@ -569,7 +591,7 @@ class Battle_ship_class(Object_class):
                 if enemy.disappear:
                     continue
 
-                # An enemy collides with the battle ship
+                # An enemy collides with the player's space craft
                 rsqr = (enemy.r + self.r) * (enemy.r + self.r)
                 dsqr = (enemy.x - self.x) * (enemy.x - self.x) + (enemy.y - self.y) * (enemy.y - self.y)
                 if dsqr < rsqr:
@@ -596,7 +618,7 @@ class Battle_ship_class(Object_class):
         
         return False
 
-    # Draw the battle ship
+    # Draw the plpayer's space craft
     def draw(self):
         def draw_ship(x, y, r, u, colors):
             if u > 0:
@@ -621,6 +643,7 @@ class Battle_ship_class(Object_class):
             if self.r_prev > 0:
                 draw_ship(self.x_prev, self.y_prev, self.r_prev, self.u_prev, self.colors[0])
 
+            # Player's space craft must be erased
             if self.disappear:
                 self.show(False)
                 return
@@ -743,7 +766,7 @@ if __name__=='__main__':
 #    machine.freq(133000000)
     machine.freq(240000000)
 
-    # Prepare game
+    # Prepare for the game
     enemy_ships = Enemy_ships_class()
 
     battle_ship = Battle_ship_class(enemy_ships)
@@ -752,7 +775,6 @@ if __name__=='__main__':
     game_stage = Game_stage_class(battle_ship)
     game_stage.clear(True)
     
-#    battle_ship.show()
     battle_ship.ships = -1
 
     # Prepare multi-core
@@ -773,18 +795,15 @@ if __name__=='__main__':
         # Move down the battle ship
         if button_b.read():
             battle_ship.move_rel(0,  1)
-#            print("MOVE DOWN")
 
         # Restart the game
         if button_x.read():
             if battle_ship.ships <= 0 or battle_ship.stage > FINAL_STAGE:
                 game_stage.clear(True)
                 battle_ship.restart()
-#            print("RESTART")
 
         # Fire a missile
         if button_y.read():
             battle_ship.fire()
-#            print("FIRE A MISSILE")
 
         time.sleep(0.02)
